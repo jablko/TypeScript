@@ -303,7 +303,7 @@ namespace ts {
      * @param isStatic A value indicating whether to get properties from the static or instance side of the class.
      */
     export function getProperties(node: ClassExpression | ClassDeclaration, requireInitializer: boolean, isStatic: boolean): readonly PropertyDeclaration[] {
-        return filter(node.members, m => isInitializedOrStaticProperty(m, requireInitializer, isStatic)) as PropertyDeclaration[];
+        return filter(node.members, m => isInitializedOrStaticProperty(m, requireInitializer, isStatic));
     }
 
     /**
@@ -312,7 +312,7 @@ namespace ts {
      * @param member The class element node.
      * @param isStatic A value indicating whether the member should be a static or instance member.
      */
-    function isInitializedOrStaticProperty(member: ClassElement, requireInitializer: boolean, isStatic: boolean) {
+    function isInitializedOrStaticProperty(member: ClassElement, requireInitializer: boolean, isStatic: boolean): member is PropertyDeclaration {
         return isPropertyDeclaration(member)
             && (!!member.initializer || !requireInitializer)
             && hasStaticModifier(member) === isStatic;

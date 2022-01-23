@@ -3055,7 +3055,7 @@ namespace ts {
         readonly kind: SyntaxKind.AssertEntry;
         readonly parent: AssertClause;
         readonly name: AssertionKey;
-        readonly value: StringLiteral;
+        readonly value: Expression;
     }
 
     export interface AssertClause extends Node {
@@ -4639,7 +4639,7 @@ namespace ts {
     export type AnyImportSyntax = ImportDeclaration | ImportEqualsDeclaration;
 
     /* @internal */
-    export type AnyImportOrRequire = AnyImportSyntax | RequireVariableDeclaration;
+    export type AnyImportOrRequire = AnyImportSyntax | VariableDeclarationInitializedTo<RequireOrImportCall>;
 
     /* @internal */
     export type AnyImportOrRequireStatement = AnyImportSyntax | RequireVariableStatement;
@@ -4664,8 +4664,8 @@ namespace ts {
     export type RequireOrImportCall = CallExpression & { expression: Identifier, arguments: [StringLiteralLike] };
 
     /* @internal */
-    export interface RequireVariableDeclaration extends VariableDeclaration {
-        readonly initializer: RequireOrImportCall;
+    export interface VariableDeclarationInitializedTo<T extends Expression> extends VariableDeclaration {
+        readonly initializer: T;
     }
 
     /* @internal */
@@ -4675,7 +4675,7 @@ namespace ts {
 
     /* @internal */
     export interface RequireVariableDeclarationList extends VariableDeclarationList {
-        readonly declarations: NodeArray<RequireVariableDeclaration>;
+        readonly declarations: NodeArray<VariableDeclarationInitializedTo<RequireOrImportCall>>;
     }
 
     /* @internal */
@@ -7446,8 +7446,8 @@ namespace ts {
         updateImportClause(node: ImportClause, isTypeOnly: boolean, name: Identifier | undefined, namedBindings: NamedImportBindings | undefined): ImportClause;
         createAssertClause(elements: NodeArray<AssertEntry>, multiLine?: boolean): AssertClause;
         updateAssertClause(node: AssertClause, elements: NodeArray<AssertEntry>, multiLine?: boolean): AssertClause;
-        createAssertEntry(name: AssertionKey, value: StringLiteral): AssertEntry;
-        updateAssertEntry (node: AssertEntry, name: AssertionKey, value: StringLiteral): AssertEntry;
+        createAssertEntry(name: AssertionKey, value: Expression): AssertEntry;
+        updateAssertEntry(node: AssertEntry, name: AssertionKey, value: Expression): AssertEntry;
         createNamespaceImport(name: Identifier): NamespaceImport;
         updateNamespaceImport(node: NamespaceImport, name: Identifier): NamespaceImport;
         createNamespaceExport(name: Identifier): NamespaceExport;
@@ -8345,6 +8345,7 @@ namespace ts {
         realpath?(path: string): string;
         getSymlinkCache?(): SymlinkCache;
         getModuleSpecifierCache?(): ModuleSpecifierCache;
+        getPackageJsonInfoCache?(): PackageJsonInfoCache | undefined;
         getGlobalTypingsCacheLocation?(): string | undefined;
         getNearestAncestorDirectoryWithPackageJson?(fileName: string, rootDir?: string): string | undefined;
 

@@ -134,6 +134,9 @@ namespace ts {
         EmptyObjectStrictFacts = All & ~(EQUndefined | EQNull | EQUndefinedOrNull),
         AllTypeofNE = TypeofNEString | TypeofNENumber | TypeofNEBigInt | TypeofNEBoolean | TypeofNESymbol | TypeofNEObject | TypeofNEFunction | NEUndefined,
         EmptyObjectFacts = All,
+        // Masks
+        OrFactsMask = TypeofEQFunction | TypeofEQObject | TypeofNEObject,
+        AndFactsMask = All & ~OrFactsMask,
     }
 
     const typeofEQFacts: ReadonlyESMap<string, TypeFacts> = new Map(getEntries({
@@ -2596,7 +2599,7 @@ namespace ts {
                     && isAliasableOrJsExpression(node.parent.right)
                 || node.kind === SyntaxKind.ShorthandPropertyAssignment
                 || node.kind === SyntaxKind.PropertyAssignment && isAliasableOrJsExpression((node as PropertyAssignment).initializer)
-                || isRequireVariableDeclaration(node);
+                || isVariableDeclarationInitializedToBareOrAccessedRequire(node);
         }
 
         function isAliasableOrJsExpression(e: Expression) {
@@ -3467,8 +3470,14 @@ namespace ts {
             const mode = contextSpecifier && isStringLiteralLike(contextSpecifier) ? getModeForUsageLocation(currentSourceFile, contextSpecifier) : currentSourceFile.impliedNodeFormat;
             const resolvedModule = getResolvedModule(currentSourceFile, moduleReference, mode);
             const resolutionDiagnostic = resolvedModule && getResolutionDiagnostic(compilerOptions, resolvedModule);
-            const sourceFile = resolvedModule && !resolutionDiagnostic && host.getSourceFile(resolvedModule.resolvedFileName);
+            const sourceFile = resolvedModule
+                && (!resolutionDiagnostic || resolutionDiagnostic === Diagnostics.Module_0_was_resolved_to_1_but_jsx_is_not_set)
+                && host.getSourceFile(resolvedModule.resolvedFileName);
             if (sourceFile) {
+                // If there's a resolutionDiagnostic we need to report it even if a sourceFile is found.
+                if (resolutionDiagnostic) {
+                    error(errorNode, resolutionDiagnostic, moduleReference, resolvedModule.resolvedFileName);
+                }
                 if (sourceFile.symbol) {
                     if (resolvedModule.isExternalLibraryImport && !resolutionExtensionIsTSOrJson(resolvedModule.extension)) {
                         errorOnImplicitAnyModule(/*isError*/ false, errorNode, resolvedModule, moduleReference);
@@ -4722,6 +4731,7 @@ namespace ts {
                         getCommonSourceDirectory: !!(host as Program).getCommonSourceDirectory ? () => (host as Program).getCommonSourceDirectory() : () => "",
                         getCurrentDirectory: () => host.getCurrentDirectory(),
                         getSymlinkCache: maybeBind(host, host.getSymlinkCache),
+                        getPackageJsonInfoCache: () => host.getPackageJsonInfoCache?.(),
                         useCaseSensitiveFileNames: maybeBind(host, host.useCaseSensitiveFileNames),
                         redirectTargetsMap: host.redirectTargetsMap,
                         getProjectReferenceRedirect: fileName => host.getProjectReferenceRedirect(fileName),
@@ -8703,7 +8713,7 @@ namespace ts {
 
             const isProperty = isPropertyDeclaration(declaration) || isPropertySignature(declaration);
             const isOptional = includeOptionality && (
-                isProperty && !!(declaration as PropertyDeclaration | PropertySignature).questionToken ||
+                isProperty && !!declaration.questionToken ||
                 isParameter(declaration) && (!!declaration.questionToken || isJSDocOptionalParameter(declaration)) ||
                 isOptionalJSDocPropertyLikeTag(declaration));
 
@@ -22985,9 +22995,22 @@ namespace ts {
                 // When an intersection contains a primitive type we ignore object type constituents as they are
                 // presumably type tags. For example, in string & { __kind__: "name" } we ignore the object type.
                 ignoreObjects ||= maybeTypeOfKind(type, TypeFlags.Primitive);
-                return reduceLeft((type as UnionType).types, (facts, t) => facts & getTypeFacts(t, ignoreObjects), TypeFacts.All);
+                return getIntersectionTypeFacts(type as IntersectionType, ignoreObjects);
             }
             return TypeFacts.All;
+        }
+
+        function getIntersectionTypeFacts(type: IntersectionType, ignoreObjects: boolean): TypeFacts {
+            // When computing the type facts of an intersection type, certain type facts are computed as `and`
+            // and others are computed as `or`.
+            let oredFacts = TypeFacts.None;
+            let andedFacts = TypeFacts.All;
+            for (const t of type.types) {
+                const f = getTypeFacts(t, ignoreObjects);
+                oredFacts |= f;
+                andedFacts &= f;
+            }
+            return oredFacts & TypeFacts.OrFactsMask | andedFacts & TypeFacts.AndFactsMask;
         }
 
         function getTypeWithFacts(type: Type, include: TypeFacts) {
@@ -27885,7 +27908,7 @@ namespace ts {
             const isNodeOpeningLikeElement = isJsxOpeningLikeElement(node);
 
             if (isNodeOpeningLikeElement) {
-                checkGrammarJsxElement(node as JsxOpeningLikeElement);
+                checkGrammarJsxElement(node);
             }
 
             checkJsxPreconditions(node);
@@ -27895,7 +27918,7 @@ namespace ts {
                 // And if there is no reactNamespace/jsxFactory's symbol in scope when targeting React emit, we should issue an error.
                 const jsxFactoryRefErr = diagnostics && compilerOptions.jsx === JsxEmit.React ? Diagnostics.Cannot_find_name_0 : undefined;
                 const jsxFactoryNamespace = getJsxNamespace(node);
-                const jsxFactoryLocation = isNodeOpeningLikeElement ? (node as JsxOpeningLikeElement).tagName : node;
+                const jsxFactoryLocation = isNodeOpeningLikeElement ? node.tagName : node;
 
                 // allow null as jsxFragmentFactory
                 let jsxFactorySym: Symbol | undefined;
@@ -27925,9 +27948,9 @@ namespace ts {
             }
 
             if (isNodeOpeningLikeElement) {
-                const jsxOpeningLikeNode = node as JsxOpeningLikeElement;
+                const jsxOpeningLikeNode = node ;
                 const sig = getResolvedSignature(jsxOpeningLikeNode);
-                checkDeprecatedSignature(sig, node as JsxOpeningLikeElement);
+                checkDeprecatedSignature(sig, node);
                 checkJsxReturnAssignableToAppropriateBound(getJsxReferenceKind(jsxOpeningLikeNode), getReturnTypeOfSignature(sig), jsxOpeningLikeNode);
             }
         }
@@ -34027,7 +34050,7 @@ namespace ts {
         }
 
         function checkExpression(node: Expression | QualifiedName, checkMode?: CheckMode, forceTuple?: boolean): Type {
-            tracing?.push(tracing.Phase.Check, "checkExpression", { kind: node.kind, pos: node.pos, end: node.end });
+            tracing?.push(tracing.Phase.Check, "checkExpression", { kind: node.kind, pos: node.pos, end: node.end, path: (node as TracingNode).tracingPath });
             const saveCurrentNode = currentNode;
             currentNode = node;
             instantiationCount = 0;
@@ -36987,7 +37010,7 @@ namespace ts {
                     // Don't validate for-in initializer as it is already an error
                     const widenedType = getWidenedTypeForVariableLikeDeclaration(node);
                     if (needCheckInitializer) {
-                        const initializerType = checkExpressionCached(node.initializer!);
+                        const initializerType = checkExpressionCached(node.initializer);
                         if (strictNullChecks && needCheckWidenedType) {
                             checkNonNullNonVoidType(initializerType, node);
                         }
@@ -37009,7 +37032,7 @@ namespace ts {
             }
             // For a commonjs `const x = require`, validate the alias and exit
             const symbol = getSymbolOfNode(node);
-            if (symbol.flags & SymbolFlags.Alias && isRequireVariableDeclaration(node)) {
+            if (symbol.flags & SymbolFlags.Alias && isVariableDeclarationInitializedToBareOrAccessedRequire(node)) {
                 checkAliasSymbol(node);
                 return;
             }
@@ -37103,7 +37126,7 @@ namespace ts {
         }
 
         function checkVariableDeclaration(node: VariableDeclaration) {
-            tracing?.push(tracing.Phase.Check, "checkVariableDeclaration", { kind: node.kind, pos: node.pos, end: node.end });
+            tracing?.push(tracing.Phase.Check, "checkVariableDeclaration", { kind: node.kind, pos: node.pos, end: node.end, path: (node as TracingNode).tracingPath });
             checkGrammarVariableDeclaration(node);
             checkVariableLikeDeclaration(node);
             tracing?.pop();
@@ -39785,6 +39808,16 @@ namespace ts {
                     return false;
                 }
             }
+            if (!isImportEqualsDeclaration(node) && node.assertClause) {
+                let hasError = false;
+                for (const clause of node.assertClause.elements) {
+                    if (!isStringLiteral(clause.value)) {
+                        hasError = true;
+                        error(clause.value, Diagnostics.Import_assertion_values_must_be_string_literal_expressions);
+                    }
+                }
+                return !hasError;
+            }
             return true;
         }
 
@@ -40530,7 +40563,7 @@ namespace ts {
         }
 
         function checkDeferredNode(node: Node) {
-            tracing?.push(tracing.Phase.Check, "checkDeferredNode", { kind: node.kind, pos: node.pos, end: node.end });
+            tracing?.push(tracing.Phase.Check, "checkDeferredNode", { kind: node.kind, pos: node.pos, end: node.end, path: (node as TracingNode).tracingPath });
             const saveCurrentNode = currentNode;
             currentNode = node;
             instantiationCount = 0;

@@ -1409,6 +1409,10 @@
         "category": "Error",
         "code": 1471
     },
+    "'catch' or 'finally' expected.": {
+        "category": "Error",
+        "code": 1472
+    },
 
     "The types of '{0}' are incompatible between these types.": {
         "category": "Error",
@@ -3365,6 +3369,10 @@
         "category": "Error",
         "code": 2836
     },
+    "Import assertion values must be string literal expressions.": {
+        "category": "Error",
+        "code": 2837
+    },
 
     "Import declaration '{0}' is using private name '{1}'.": {
         "category": "Error",
@@ -4165,7 +4173,6 @@
         "category": "Message",
         "code": 6041
     },
-    
     "Generates corresponding '.map' file.": {
         "category": "Message",
         "code": 6043
@@ -4949,7 +4956,7 @@
         "category": "Message",
         "code": 6259
     },
-    "Found {0} errors in 1 file.": {
+    "Found {0} errors in the same file, starting at: {1}": {
         "category": "Message",
         "code": 6260
     },

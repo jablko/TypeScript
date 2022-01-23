@@ -177,6 +177,7 @@ namespace ts.Completions {
         cb: (context: ModuleSpecifierResolutioContext) => TReturn,
     ): TReturn {
         const start = timestamp();
+        const packageJsonImportFilter = createPackageJsonImportFilter(sourceFile, preferences, host);
         let resolutionLimitExceeded = false;
         let ambientCount = 0;
         let resolvedCount = 0;
@@ -202,7 +203,7 @@ namespace ts.Completions {
             const shouldResolveModuleSpecifier = isForImportStatementCompletion || preferences.allowIncompleteCompletions && resolvedCount < moduleSpecifierResolutionLimit;
             const shouldGetModuleSpecifierFromCache = !shouldResolveModuleSpecifier && preferences.allowIncompleteCompletions && cacheAttemptCount < moduleSpecifierResolutionCacheAttemptLimit;
             const result = (shouldResolveModuleSpecifier || shouldGetModuleSpecifierFromCache)
-                ? codefix.getModuleSpecifierForBestExportInfo(exportInfo, sourceFile, program, host, preferences, shouldGetModuleSpecifierFromCache)
+                ? codefix.getModuleSpecifierForBestExportInfo(exportInfo, sourceFile, program, host, preferences, packageJsonImportFilter, shouldGetModuleSpecifierFromCache)
                 : undefined;
 
             if (!shouldResolveModuleSpecifier && !shouldGetModuleSpecifierFromCache || shouldGetModuleSpecifierFromCache && !result) {
@@ -2086,8 +2087,7 @@ namespace ts.Completions {
                 // GH#39946. Pulling on the type of a node inside of a function with a contextual `this` parameter can result in a circularity
                 // if the `node` is part of the exprssion of a `yield` or `return`. This circularity doesn't exist at compile time because
                 // we will check (and cache) the type of `this` *before* checking the type of the node.
-                const container = getThisContainer(node, /*includeArrowFunctions*/ false);
-                if (!isSourceFile(container) && container.parent) typeChecker.getTypeAtLocation(container);
+                typeChecker.tryGetThisTypeAt(node, /*includeGlobalThis*/ false);
 
                 let type = typeChecker.getTypeAtLocation(node).getNonOptionalType();
                 let insertQuestionDot = false;
@@ -2257,7 +2257,7 @@ namespace ts.Completions {
             const attrsType = jsxContainer && typeChecker.getContextualType(jsxContainer.attributes);
             if (!attrsType) return GlobalsSearch.Continue;
             const completionsType = jsxContainer && typeChecker.getContextualType(jsxContainer.attributes, ContextFlags.Completions);
-            symbols = concatenate(symbols, filterJsxAttributes(getPropertiesForObjectExpression(attrsType, completionsType, jsxContainer!.attributes, typeChecker), jsxContainer!.attributes.properties));
+            symbols = concatenate(symbols, filterJsxAttributes(getPropertiesForObjectExpression(attrsType, completionsType, jsxContainer.attributes, typeChecker), jsxContainer.attributes.properties));
             setSortTextToOptionalMember();
             completionKind = CompletionKind.MemberLike;
             isNewIdentifierLocation = false;
@@ -3587,8 +3587,8 @@ namespace ts.Completions {
 
     export function getPropertiesForObjectExpression(contextualType: Type, completionsType: Type | undefined, obj: ObjectLiteralExpression | JsxAttributes, checker: TypeChecker): Symbol[] {
         const hasCompletionsType = completionsType && completionsType !== contextualType;
-        const type = hasCompletionsType && !(completionsType!.flags & TypeFlags.AnyOrUnknown)
-            ? checker.getUnionType([contextualType, completionsType!])
+        const type = hasCompletionsType && !(completionsType.flags & TypeFlags.AnyOrUnknown)
+            ? checker.getUnionType([contextualType, completionsType])
             : contextualType;
 
         const properties = getApparentProperties(type, obj, checker);

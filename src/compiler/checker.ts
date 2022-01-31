@@ -1198,6 +1198,10 @@ namespace ts {
             return diagnostic;
         }
 
+        function isDeprecatedSymbol(symbol: Symbol) {
+            return !!(getDeclarationNodeFlagsFromSymbol(symbol) & NodeFlags.Deprecated);
+        }
+
         function addDeprecatedSuggestion(location: Node, declarations: Node[], deprecatedEntity: string) {
             const diagnostic = createDiagnosticForNode(location, Diagnostics._0_is_deprecated, deprecatedEntity);
             return addDeprecatedSuggestionWorker(declarations, diagnostic);
@@ -2231,27 +2235,21 @@ namespace ts {
                         error(errorLocation, Diagnostics.Parameter_0_cannot_reference_identifier_1_declared_after_it, declarationNameToString(associatedDeclarationForContainingInitializerOrBindingName.name), declarationNameToString(errorLocation as Identifier));
                     }
                 }
-                if (result && errorLocation && meaning & SymbolFlags.Value && result.flags & SymbolFlags.Alias) {
-                    checkSymbolUsageInExpressionContext(result, name, errorLocation);
+                if (result && errorLocation && meaning & SymbolFlags.Value && result.flags & SymbolFlags.Alias && !(result.flags & SymbolFlags.Value) && !isValidTypeOnlyAliasUseSite(errorLocation)) {
+                    const typeOnlyDeclaration = getTypeOnlyAliasDeclaration(result);
+                    if (typeOnlyDeclaration) {
+                        const message = typeOnlyDeclaration.kind === SyntaxKind.ExportSpecifier
+                            ? Diagnostics._0_cannot_be_used_as_a_value_because_it_was_exported_using_export_type
+                            : Diagnostics._0_cannot_be_used_as_a_value_because_it_was_imported_using_import_type;
+                        const unescapedName = unescapeLeadingUnderscores(name);
+                        addTypeOnlyDeclarationRelatedInfo(
+                            error(errorLocation, message, unescapedName),
+                            typeOnlyDeclaration,
+                            unescapedName);
+                    }
                 }
             }
             return result;
-        }
-
-        function checkSymbolUsageInExpressionContext(symbol: Symbol, name: __String, useSite: Node) {
-            if (!isValidTypeOnlyAliasUseSite(useSite)) {
-                const typeOnlyDeclaration = getTypeOnlyAliasDeclaration(symbol);
-                if (typeOnlyDeclaration) {
-                    const message = typeOnlyDeclaration.kind === SyntaxKind.ExportSpecifier
-                        ? Diagnostics._0_cannot_be_used_as_a_value_because_it_was_exported_using_export_type
-                        : Diagnostics._0_cannot_be_used_as_a_value_because_it_was_imported_using_import_type;
-                    const unescapedName = unescapeLeadingUnderscores(name);
-                    addTypeOnlyDeclarationRelatedInfo(
-                        error(useSite, message, unescapedName),
-                        typeOnlyDeclaration,
-                        unescapedName);
-                }
-            }
         }
 
         function addTypeOnlyDeclarationRelatedInfo(diagnostic: Diagnostic, typeOnlyDeclaration: TypeOnlyCompatibleAliasDeclaration | undefined, unescapedName: string) {
@@ -6393,7 +6391,8 @@ namespace ts {
                         includePrivateSymbol?.(sym);
                     }
                     if (isIdentifier(node)) {
-                        const name = sym.flags & SymbolFlags.TypeParameter ? typeParameterToName(getDeclaredTypeOfSymbol(sym), context) : factory.cloneNode(node);
+                        const type = getDeclaredTypeOfSymbol(sym);
+                        const name = sym.flags & SymbolFlags.TypeParameter && !isTypeSymbolAccessible(type.symbol, context.enclosingDeclaration) ? typeParameterToName(type, context) : factory.cloneNode(node);
                         name.symbol = sym; // for quickinfo, which uses identifier symbol information
                         return { introducesError, node: setEmitFlags(setOriginalNode(name, node), EmitFlags.NoAsciiEscaping) };
                     }
@@ -15184,7 +15183,7 @@ namespace ts {
                 }
                 const prop = getPropertyOfType(objectType, propName);
                 if (prop) {
-                    if (accessFlags & AccessFlags.ReportDeprecated && accessNode && prop.declarations && getDeclarationNodeFlagsFromSymbol(prop) & NodeFlags.Deprecated && isUncalledFunctionReference(accessNode, prop)) {
+                    if (accessFlags & AccessFlags.ReportDeprecated && accessNode && prop.declarations && isDeprecatedSymbol(prop) && isUncalledFunctionReference(accessNode, prop)) {
                         const deprecatedNode = accessExpression?.argumentExpression ?? (isIndexedAccessTypeNode(accessNode) ? accessNode.indexType : accessNode);
                         addDeprecatedSuggestion(deprecatedNode, prop.declarations, propName as string);
                     }
@@ -25143,9 +25142,9 @@ namespace ts {
             }
 
             const localOrExportSymbol = getExportSymbolOfValueSymbolIfExported(symbol);
-            const sourceSymbol = localOrExportSymbol.flags & SymbolFlags.Alias ? resolveAlias(localOrExportSymbol) : localOrExportSymbol;
-            if (sourceSymbol.declarations && getDeclarationNodeFlagsFromSymbol(sourceSymbol) & NodeFlags.Deprecated && isUncalledFunctionReference(node, sourceSymbol)) {
-                addDeprecatedSuggestion(node, sourceSymbol.declarations, node.escapedText as string);
+            const targetSymbol = checkDeprecatedAliasedSymbol(localOrExportSymbol, node);
+            if (isDeprecatedSymbol(targetSymbol) && isUncalledFunctionReference(node, targetSymbol) && targetSymbol.declarations) {
+                addDeprecatedSuggestion(node, targetSymbol.declarations, node.escapedText as string);
             }
 
             let declaration = localOrExportSymbol.valueDeclaration;
@@ -28512,7 +28511,7 @@ namespace ts {
                 }
             }
             else {
-                if (prop.declarations && getDeclarationNodeFlagsFromSymbol(prop) & NodeFlags.Deprecated && isUncalledFunctionReference(node, prop)) {
+                if (isDeprecatedSymbol(prop) && isUncalledFunctionReference(node, prop) && prop.declarations) {
                     addDeprecatedSuggestion(right, prop.declarations, right.escapedText as string);
                 }
                 checkPropertyNotUsedBeforeDeclaration(prop, node, right);
@@ -30116,7 +30115,7 @@ namespace ts {
                         const diags = max > 1 ? allDiagnostics[minIndex] : flatten(allDiagnostics);
                         Debug.assert(diags.length > 0, "No errors reported for 3 or fewer overload signatures");
                         const chain = chainDiagnosticMessages(
-                            map(diags, d => typeof d.messageText === "string" ? (d as DiagnosticMessageChain) : d.messageText),
+                            map(diags, createDiagnosticMessageChainFromDiagnostic),
                             Diagnostics.No_overload_matches_this_call);
                         // The below is a spread to guarantee we get a new (mutable) array - our `flatMap` helper tries to do "smart" optimizations where it reuses input
                         // arrays and the emptyArray singleton where possible, which is decidedly not what we want while we're still constructing this diagnostic
@@ -39471,16 +39470,15 @@ namespace ts {
                         return nodeIsMissing(expr) ? 0 : evaluateEnumMember(expr, getSymbolOfNode(member.parent), identifier.escapedText);
                     case SyntaxKind.ElementAccessExpression:
                     case SyntaxKind.PropertyAccessExpression:
-                        const ex = expr as AccessExpression;
-                        if (isConstantMemberAccess(ex)) {
-                            const type = getTypeOfExpression(ex.expression);
+                        if (isConstantMemberAccess(expr)) {
+                            const type = getTypeOfExpression(expr.expression);
                             if (type.symbol && type.symbol.flags & SymbolFlags.Enum) {
                                 let name: __String;
-                                if (ex.kind === SyntaxKind.PropertyAccessExpression) {
-                                    name = ex.name.escapedText;
+                                if (expr.kind === SyntaxKind.PropertyAccessExpression) {
+                                    name = expr.name.escapedText;
                                 }
                                 else {
-                                    name = escapeLeadingUnderscores(cast(ex.argumentExpression, isLiteralExpression).text);
+                                    name = escapeLeadingUnderscores(cast(expr.argumentExpression, isLiteralExpression).text);
                                 }
                                 return evaluateEnumMember(expr, type.symbol, name);
                             }
@@ -39509,7 +39507,12 @@ namespace ts {
             }
         }
 
-        function isConstantMemberAccess(node: Expression): boolean {
+        function isConstantMemberAccess(node: Expression): node is AccessExpression {
+            const type = getTypeOfExpression(node);
+            if(type === errorType) {
+                return false;
+            }
+
             return node.kind === SyntaxKind.Identifier ||
                 node.kind === SyntaxKind.PropertyAccessExpression && isConstantMemberAccess((node as PropertyAccessExpression).expression) ||
                 node.kind === SyntaxKind.ElementAccessExpression && isConstantMemberAccess((node as ElementAccessExpression).expression) &&
@@ -39889,10 +39892,45 @@ namespace ts {
                     }
                 }
 
-                if (isImportSpecifier(node) && target.declarations?.every(d => !!(getCombinedNodeFlags(d) & NodeFlags.Deprecated))) {
-                    addDeprecatedSuggestion(node.name, target.declarations, symbol.escapedName as string);
+                if (isImportSpecifier(node)) {
+                    const targetSymbol = checkDeprecatedAliasedSymbol(symbol, node);
+                    if (isDeprecatedAliasedSymbol(targetSymbol) && targetSymbol.declarations) {
+                        addDeprecatedSuggestion(node, targetSymbol.declarations, targetSymbol.escapedName as string);
+                    }
                 }
             }
+        }
+
+        function isDeprecatedAliasedSymbol(symbol: Symbol) {
+            return !!symbol.declarations && every(symbol.declarations, d => !!(getCombinedNodeFlags(d) & NodeFlags.Deprecated));
+        }
+
+        function checkDeprecatedAliasedSymbol(symbol: Symbol, location: Node) {
+            if (!(symbol.flags & SymbolFlags.Alias)) return symbol;
+
+            const targetSymbol = resolveAlias(symbol);
+            if (targetSymbol === unknownSymbol) return targetSymbol;
+
+            while (symbol.flags & SymbolFlags.Alias) {
+                const target = getImmediateAliasedSymbol(symbol);
+                if (target) {
+                    if (target === targetSymbol) break;
+                    if (target.declarations && length(target.declarations)) {
+                        if (isDeprecatedAliasedSymbol(target)) {
+                            addDeprecatedSuggestion(location, target.declarations, target.escapedName as string);
+                            break;
+                        }
+                        else {
+                            if (symbol === targetSymbol) break;
+                            symbol = target;
+                        }
+                    }
+                }
+                else {
+                    break;
+                }
+            }
+            return targetSymbol;
         }
 
         function checkImportBinding(node: ImportEqualsDeclaration | ImportClause | NamespaceImport | ImportSpecifier) {
@@ -42545,7 +42583,7 @@ namespace ts {
                 return quickResult;
             }
 
-            let lastStatic: Node | undefined, lastDeclare: Node | undefined, lastAsync: Node | undefined, lastReadonly: Node | undefined, lastOverride: Node | undefined;
+            let lastStatic: Node | undefined, lastDeclare: Node | undefined, lastAsync: Node | undefined, lastOverride: Node | undefined;
             let flags = ModifierFlags.None;
             for (const modifier of node.modifiers!) {
                 if (modifier.kind !== SyntaxKind.ReadonlyKeyword) {
@@ -42652,7 +42690,6 @@ namespace ts {
                             return grammarErrorOnNode(modifier, Diagnostics.readonly_modifier_can_only_appear_on_a_property_declaration_or_index_signature);
                         }
                         flags |= ModifierFlags.Readonly;
-                        lastReadonly = modifier;
                         break;
 
                     case SyntaxKind.ExportKeyword:
@@ -42771,17 +42808,11 @@ namespace ts {
                 if (flags & ModifierFlags.Static) {
                     return grammarErrorOnNode(lastStatic!, Diagnostics._0_modifier_cannot_appear_on_a_constructor_declaration, "static");
                 }
-                if (flags & ModifierFlags.Abstract) {
-                    return grammarErrorOnNode(lastStatic!, Diagnostics._0_modifier_cannot_appear_on_a_constructor_declaration, "abstract"); // TODO: GH#18217
-                }
                 if (flags & ModifierFlags.Override) {
                     return grammarErrorOnNode(lastOverride!, Diagnostics._0_modifier_cannot_appear_on_a_constructor_declaration, "override"); // TODO: GH#18217
                 }
-                else if (flags & ModifierFlags.Async) {
+                if (flags & ModifierFlags.Async) {
                     return grammarErrorOnNode(lastAsync!, Diagnostics._0_modifier_cannot_appear_on_a_constructor_declaration, "async");
-                }
-                else if (flags & ModifierFlags.Readonly) {
-                    return grammarErrorOnNode(lastReadonly!, Diagnostics._0_modifier_cannot_appear_on_a_constructor_declaration, "readonly");
                 }
                 return false;
             }

@@ -41,7 +41,7 @@ namespace ts.SymbolDisplay {
         if (typeChecker.isArgumentsSymbol(symbol)) {
             return ScriptElementKind.localVariableElement;
         }
-        if (location.kind === SyntaxKind.ThisKeyword && isExpression(location)) {
+        if (location.kind === SyntaxKind.ThisKeyword && isExpression(location) || isThisInTypeQuery(location)) {
             return ScriptElementKind.parameterElement;
         }
         const flags = getCombinedLocalAndExportSymbolFlags(symbol);
@@ -143,7 +143,7 @@ namespace ts.SymbolDisplay {
         const symbolFlags = getCombinedLocalAndExportSymbolFlags(symbol);
         let symbolKind = semanticMeaning & SemanticMeaning.Value ? getSymbolKindOfConstructorPropertyMethodAccessorFunctionOrVar(typeChecker, symbol, location) : ScriptElementKind.unknown;
         let hasAddedSymbolInfo = false;
-        const isThisExpression = location.kind === SyntaxKind.ThisKeyword && isInExpressionContext(location);
+        const isThisExpression = location.kind === SyntaxKind.ThisKeyword && isInExpressionContext(location) || isThisInTypeQuery(location);
         let type: Type | undefined;
         let printer: Printer;
         let documentationFromAlias: SymbolDisplayPart[] | undefined;
@@ -581,6 +581,19 @@ namespace ts.SymbolDisplay {
                         break;
                     }
                 }
+            }
+        }
+
+        if (documentation.length === 0 && isIdentifier(location) && symbol.valueDeclaration && isBindingElement(symbol.valueDeclaration)) {
+            const declaration = symbol.valueDeclaration;
+            const parent = declaration.parent;
+            if (isIdentifier(declaration.name) && isObjectBindingPattern(parent)) {
+                const name = getTextOfIdentifierOrLiteral(declaration.name);
+                const objectType = typeChecker.getTypeAtLocation(parent);
+                documentation = firstDefined(objectType.isUnion() ? objectType.types : [objectType], t => {
+                    const prop = t.getProperty(name);
+                    return prop ? prop.getDocumentationComment(typeChecker) : undefined;
+                }) || emptyArray;
             }
         }
 

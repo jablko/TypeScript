@@ -1320,13 +1320,14 @@ namespace ts {
             else { // error
                 const isEitherEnum = !!(target.flags & SymbolFlags.Enum || source.flags & SymbolFlags.Enum);
                 const isEitherBlockScoped = !!(target.flags & SymbolFlags.BlockScopedVariable || source.flags & SymbolFlags.BlockScopedVariable);
-                const message = isEitherEnum
-                    ? Diagnostics.Enum_declarations_can_only_merge_with_namespace_or_other_enum_declarations
-                    : isEitherBlockScoped
-                        ? Diagnostics.Cannot_redeclare_block_scoped_variable_0
-                        : Diagnostics.Duplicate_identifier_0;
+                const message = isEitherEnum ? Diagnostics.Enum_declarations_can_only_merge_with_namespace_or_other_enum_declarations
+                    : isEitherBlockScoped ? Diagnostics.Cannot_redeclare_block_scoped_variable_0
+                    : Diagnostics.Duplicate_identifier_0;
                 const sourceSymbolFile = source.declarations && getSourceFileOfNode(source.declarations[0]);
                 const targetSymbolFile = target.declarations && getSourceFileOfNode(target.declarations[0]);
+
+                const isSourcePlainJs = isPlainJsFile(sourceSymbolFile, compilerOptions.checkJs);
+                const isTargetPlainJs = isPlainJsFile(targetSymbolFile, compilerOptions.checkJs);
                 const symbolName = symbolToString(source);
 
                 // Collect top-level duplicate identifier errors into one mapping, so we can then merge their diagnostics if there are a bunch
@@ -1337,12 +1338,12 @@ namespace ts {
                         ({ firstFile, secondFile, conflictingSymbols: new Map() } as DuplicateInfoForFiles));
                     const conflictingSymbolInfo = getOrUpdate(filesDuplicates.conflictingSymbols, symbolName, () =>
                         ({ isBlockScoped: isEitherBlockScoped, firstFileLocations: [], secondFileLocations: [] } as DuplicateInfoForSymbol));
-                    addDuplicateLocations(conflictingSymbolInfo.firstFileLocations, source);
-                    addDuplicateLocations(conflictingSymbolInfo.secondFileLocations, target);
+                    if (!isSourcePlainJs) addDuplicateLocations(conflictingSymbolInfo.firstFileLocations, source);
+                    if (!isTargetPlainJs) addDuplicateLocations(conflictingSymbolInfo.secondFileLocations, target);
                 }
                 else {
-                    addDuplicateDeclarationErrorsForSymbols(source, message, symbolName, target);
-                    addDuplicateDeclarationErrorsForSymbols(target, message, symbolName, source);
+                    if (!isSourcePlainJs) addDuplicateDeclarationErrorsForSymbols(source, message, symbolName, target);
+                    if (!isTargetPlainJs) addDuplicateDeclarationErrorsForSymbols(target, message, symbolName, source);
                 }
             }
             return target;
@@ -3980,8 +3981,15 @@ namespace ts {
                 return res;
             }
             const candidates = mapDefined(symbol.declarations, d => {
-                if (!isAmbientModule(d) && d.parent && hasNonGlobalAugmentationExternalModuleSymbol(d.parent)) {
-                    return getSymbolOfNode(d.parent);
+                if (!isAmbientModule(d) && d.parent){
+                    // direct children of a module
+                    if (hasNonGlobalAugmentationExternalModuleSymbol(d.parent)) {
+                        return getSymbolOfNode(d.parent);
+                    }
+                    // export ='d member of an ambient module
+                    if (isModuleBlock(d.parent) && d.parent.parent && resolveExternalModuleSymbol(getSymbolOfNode(d.parent.parent)) === symbol) {
+                        return getSymbolOfNode(d.parent.parent);
+                    }
                 }
                 if (isClassExpression(d) && isBinaryExpression(d.parent) && d.parent.operatorToken.kind === SyntaxKind.EqualsToken && isAccessExpression(d.parent.left) && isEntityNameExpression(d.parent.left.expression)) {
                     if (isModuleExportsAccessExpression(d.parent.left) || isExportsIdentifier(d.parent.left.expression)) {
@@ -8772,12 +8780,8 @@ namespace ts {
                     }
                 }
                 if (isInJSFile(declaration)) {
-                    const typeTag = getJSDocType(func);
-                    if (typeTag && isFunctionTypeNode(typeTag)) {
-                        const signature = getSignatureFromDeclaration(typeTag);
-                        const pos = func.parameters.indexOf(declaration);
-                        return declaration.dotDotDotToken ? getRestTypeAtPosition(signature, pos) : getTypeAtPosition(signature, pos);
-                    }
+                    const type = getParameterTypeOfTypeTag(func, declaration);
+                    if (type) return type;
                 }
                 // Use contextual parameter type if one is available
                 const type = declaration.symbol.escapedName === InternalSymbolName.This ? getContextualThisParameterType(func) : getContextuallyTypedParameterType(declaration);
@@ -12773,6 +12777,13 @@ namespace ts {
             if (!(isInJSFile(node) && isFunctionLikeDeclaration(node))) return undefined;
             const typeTag = getJSDocTypeTag(node);
             return typeTag?.typeExpression && getSingleCallSignature(getTypeFromTypeNode(typeTag.typeExpression));
+        }
+
+        function getParameterTypeOfTypeTag(func: FunctionLikeDeclaration, parameter: ParameterDeclaration) {
+            const signature = getSignatureOfTypeTag(func);
+            if (!signature) return undefined;
+            const pos = func.parameters.indexOf(parameter);
+            return parameter.dotDotDotToken ? getRestTypeAtPosition(signature, pos) : getTypeAtPosition(signature, pos);
         }
 
         function getReturnTypeOfTypeTag(node: SignatureDeclaration | JSDocSignature) {
@@ -17896,8 +17907,10 @@ namespace ts {
                     (source as LiteralType).value === (target as LiteralType).value &&
                     isEnumTypeRelatedTo(getParentOfSymbol(source.symbol)!, getParentOfSymbol(target.symbol)!, errorReporter)) return true;
             }
-            if (s & TypeFlags.Undefined && (!strictNullChecks || t & (TypeFlags.Undefined | TypeFlags.Void))) return true;
-            if (s & TypeFlags.Null && (!strictNullChecks || t & TypeFlags.Null)) return true;
+            // In non-strictNullChecks mode, `undefined` and `null` are assignable to anything except `never`.
+            // Since unions and intersections may reduce to `never`, we exclude them here.
+            if (s & TypeFlags.Undefined && (!strictNullChecks && !(t & TypeFlags.UnionOrIntersection) || t & (TypeFlags.Undefined | TypeFlags.Void))) return true;
+            if (s & TypeFlags.Null && (!strictNullChecks && !(t & TypeFlags.UnionOrIntersection) || t & TypeFlags.Null)) return true;
             if (s & TypeFlags.Object && t & TypeFlags.NonPrimitive) return true;
             if (relation === assignableRelation || relation === comparableRelation) {
                 if (s & TypeFlags.Any) return true;
@@ -19416,6 +19429,11 @@ namespace ts {
                     }
                     if (getObjectFlags(source) & ObjectFlags.Reference && getObjectFlags(target) & ObjectFlags.Reference && (source as TypeReference).target === (target as TypeReference).target &&
                         !isTupleType(source) && !(getObjectFlags(source) & ObjectFlags.MarkerType || getObjectFlags(target) & ObjectFlags.MarkerType)) {
+                        // When strictNullChecks is disabled, the element type of the empty array literal is undefinedWideningType,
+                        // and an empty array literal wouldn't be assignable to a `never[]` without this check.
+                        if (isEmptyArrayLiteralType(source)) {
+                            return Ternary.True;
+                        }
                         // We have type references to the same generic type, and the type references are not marker
                         // type references (which are intended by be compared structurally). Obtain the variance
                         // information for the type parameters and relate the type arguments accordingly.
@@ -19719,6 +19737,18 @@ namespace ts {
                         reportError(Diagnostics.Property_0_is_protected_in_type_1_but_public_in_type_2,
                             symbolToString(targetProp), typeToString(source), typeToString(target));
                     }
+                    return Ternary.False;
+                }
+
+                // Ensure {readonly a: whatever} is not a subtype of {a: whatever},
+                // while {a: whatever} is a subtype of {readonly a: whatever}.
+                // This ensures the subtype relationship is ordered, and preventing declaration order
+                // from deciding which type "wins" in union subtype reduction.
+                // They're still assignable to one another, since `readonly` doesn't affect assignability.
+                if (
+                    (relation === subtypeRelation || relation === strictSubtypeRelation) &&
+                    !!(sourcePropFlags & ModifierFlags.Readonly) && !(targetPropFlags & ModifierFlags.Readonly)
+                ) {
                     return Ternary.False;
                 }
                 // If the target comes from a partial union prop, allow `undefined` in the target type
@@ -34468,6 +34498,7 @@ namespace ts {
             }
 
             checkTypeParameters(getEffectiveTypeParameterDeclarations(node));
+            checkUnmatchedJSDocParameters(node);
 
             forEach(node.parameters, checkParameter);
 
@@ -36231,40 +36262,7 @@ namespace ts {
 
         function checkJSDocParameterTag(node: JSDocParameterTag) {
             checkSourceElement(node.typeExpression);
-            if (!getParameterSymbolFromJSDoc(node)) {
-                const decl = getHostSignatureFromJSDoc(node);
-                // don't issue an error for invalid hosts -- just functions --
-                // and give a better error message when the host function mentions `arguments`
-                // but the tag doesn't have an array type
-                if (decl) {
-                    const i = getJSDocTags(decl).filter(isJSDocParameterTag).indexOf(node);
-                    if (i > -1 && i < decl.parameters.length && isBindingPattern(decl.parameters[i].name)) {
-                        return;
-                    }
-                    if (!containsArgumentsReference(decl)) {
-                        if (isQualifiedName(node.name)) {
-                            error(node.name,
-                                Diagnostics.Qualified_name_0_is_not_allowed_without_a_leading_param_object_1,
-                                entityNameToString(node.name),
-                                entityNameToString(node.name.left));
-                        }
-                        else {
-                            error(node.name,
-                                Diagnostics.JSDoc_param_tag_has_name_0_but_there_is_no_parameter_with_that_name,
-                                idText(node.name));
-                        }
-                    }
-                    else if (findLast(getJSDocTags(decl), isJSDocParameterTag) === node &&
-                        node.typeExpression && node.typeExpression.type &&
-                        !isArrayType(getTypeFromTypeNode(node.typeExpression.type))) {
-                        error(node.name,
-                            Diagnostics.JSDoc_param_tag_has_name_0_but_there_is_no_parameter_with_that_name_It_would_match_arguments_if_it_had_an_array_type,
-                            idText(node.name.kind === SyntaxKind.QualifiedName ? node.name.right : node.name));
-                    }
-                }
-            }
         }
-
         function checkJSDocPropertyTag(node: JSDocPropertyTag) {
             checkSourceElement(node.typeExpression);
         }
@@ -38560,6 +38558,45 @@ namespace ts {
             }
         }
 
+        function checkUnmatchedJSDocParameters(node: SignatureDeclaration) {
+            const jsdocParameters = filter(getJSDocTags(node), isJSDocParameterTag);
+            if (!length(jsdocParameters)) return;
+
+            const isJs = isInJSFile(node);
+            const parameters = new Set<__String>();
+            const excludedParameters = new Set<number>();
+            forEach(node.parameters, ({ name }, index) => {
+                if (isIdentifier(name)) {
+                    parameters.add(name.escapedText);
+                }
+                if (isBindingPattern(name)) {
+                    excludedParameters.add(index);
+                }
+            });
+
+            const containsArguments = containsArgumentsReference(node);
+            if (containsArguments) {
+                const lastJSDocParam = lastOrUndefined(jsdocParameters);
+                if (lastJSDocParam && isIdentifier(lastJSDocParam.name) && lastJSDocParam.typeExpression &&
+                    lastJSDocParam.typeExpression.type && !parameters.has(lastJSDocParam.name.escapedText) && !isArrayType(getTypeFromTypeNode(lastJSDocParam.typeExpression.type))) {
+                    errorOrSuggestion(isJs, lastJSDocParam.name, Diagnostics.JSDoc_param_tag_has_name_0_but_there_is_no_parameter_with_that_name_It_would_match_arguments_if_it_had_an_array_type, idText(lastJSDocParam.name));
+                }
+            }
+            else {
+                forEach(jsdocParameters, ({ name }, index) => {
+                    if (excludedParameters.has(index) || isIdentifier(name) && parameters.has(name.escapedText)) {
+                        return;
+                    }
+                    if (isQualifiedName(name)) {
+                        errorOrSuggestion(isJs, name, Diagnostics.Qualified_name_0_is_not_allowed_without_a_leading_param_object_1, entityNameToString(name), entityNameToString(name.left));
+                    }
+                    else {
+                        errorOrSuggestion(isJs, name, Diagnostics.JSDoc_param_tag_has_name_0_but_there_is_no_parameter_with_that_name, idText(name));
+                    }
+                });
+            }
+        }
+
         /**
          * Check each type parameter and check that type parameters have no duplicate type parameter declarations
          */
@@ -39928,6 +39965,9 @@ namespace ts {
                                         isType ? undefined : typeOnlyAlias,
                                         name
                                     );
+                                }
+                                if (isType && node.kind === SyntaxKind.ImportEqualsDeclaration && hasEffectiveModifier(node, ModifierFlags.Export)) {
+                                    error(node, Diagnostics.Cannot_use_export_import_on_a_type_or_type_only_namespace_when_the_isolatedModules_flag_is_provided);
                                 }
                                 break;
                             }

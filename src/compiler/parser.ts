@@ -875,7 +875,7 @@ namespace ts {
             initializeState("", content, languageVersion, /*syntaxCursor*/ undefined, ScriptKind.JS);
             // Prime the scanner.
             nextToken();
-            const entityName = parseEntityName(/*allowReservedWords*/ true);
+            const entityName = parseEntityName(/*allowReservedWords*/ true, /*allowPrivateIdentifiers*/ false);
             const isInvalid = token() === SyntaxKind.EndOfFileToken && !parseDiagnostics.length;
             clearState();
             return isInvalid ? entityName : undefined;
@@ -2719,7 +2719,7 @@ namespace ts {
             return createMissingList<T>();
         }
 
-        function parseEntityName(allowReservedWords: boolean, diagnosticMessage?: DiagnosticMessage): EntityName {
+        function parseEntityName(allowReservedWords: boolean, allowPrivateIdentifiers: boolean, diagnosticMessage?: DiagnosticMessage): EntityName {
             const pos = getNodePos();
             let entity: EntityName = allowReservedWords ? parseIdentifierName(diagnosticMessage) : parseIdentifier(diagnosticMessage);
             let dotPos = getNodePos();
@@ -2733,7 +2733,7 @@ namespace ts {
                 entity = finishNode(
                     factory.createQualifiedName(
                         entity,
-                        parseRightSideOfDot(allowReservedWords, /* allowPrivateIdentifiers */ false) as Identifier
+                        parseRightSideOfDot(allowReservedWords, allowPrivateIdentifiers) as Identifier
                     ),
                     pos
                 );
@@ -2918,7 +2918,7 @@ namespace ts {
         // TYPES
 
         function parseEntityNameOfTypeReference() {
-            return parseEntityName(/*allowReservedWords*/ true, Diagnostics.Type_expected);
+            return parseEntityName(/*allowReservedWords*/ true, /*allowPrivateIdentifiers*/ false, Diagnostics.Type_expected);
         }
 
         function parseTypeArgumentsOfTypeReference() {
@@ -3078,7 +3078,7 @@ namespace ts {
         function parseTypeQuery(): TypeQueryNode {
             const pos = getNodePos();
             parseExpected(SyntaxKind.TypeOfKeyword);
-            return finishNode(factory.createTypeQueryNode(parseEntityName(/*allowReservedWords*/ true)), pos);
+            return finishNode(factory.createTypeQueryNode(parseEntityName(/*allowReservedWords*/ true, /*allowPrivateIdentifiers*/ true)), pos);
         }
 
         function parseTypeParameter(): TypeParameterDeclaration {
@@ -6005,11 +6005,12 @@ namespace ts {
 
         function parseCaseClause(): CaseClause {
             const pos = getNodePos();
+            const hasJSDoc = hasPrecedingJSDocComment();
             parseExpected(SyntaxKind.CaseKeyword);
             const expression = allowInAnd(parseExpression);
             parseExpected(SyntaxKind.ColonToken);
             const statements = parseList(ParsingContext.SwitchClauseStatements, parseStatement);
-            return finishNode(factory.createCaseClause(expression, statements), pos);
+            return withJSDoc(finishNode(factory.createCaseClause(expression, statements), pos), hasJSDoc);
         }
 
         function parseDefaultClause(): DefaultClause {
@@ -7350,7 +7351,7 @@ namespace ts {
         function parseModuleReference() {
             return isExternalModuleReference()
                 ? parseExternalModuleReference()
-                : parseEntityName(/*allowReservedWords*/ false);
+                : parseEntityName(/*allowReservedWords*/ false, /*allowPrivateIdentifiers*/ false);
         }
 
         function parseExternalModuleReference() {
@@ -7658,7 +7659,7 @@ namespace ts {
                 const pos = getNodePos();
                 const hasBrace = parseOptional(SyntaxKind.OpenBraceToken);
                 const p2 = getNodePos();
-                let entityName: EntityName | JSDocMemberName = parseEntityName(/* allowReservedWords*/ false);
+                let entityName: EntityName | JSDocMemberName = parseEntityName(/* allowReservedWords*/ false, /*allowPrivateIdentifiers*/ false);
                 while (token() === SyntaxKind.PrivateIdentifier) {
                     reScanHashToken(); // rescan #id as # id
                     nextTokenJSDoc(); // then skip the #
@@ -8121,7 +8122,7 @@ namespace ts {
                     // parseEntityName logs an error for non-identifier, so create a MissingNode ourselves to avoid the error
                     const p2 = getNodePos();
                     let name: EntityName | JSDocMemberName | undefined = tokenIsIdentifierOrKeyword(token())
-                        ? parseEntityName(/*allowReservedWords*/ true)
+                        ? parseEntityName(/*allowReservedWords*/ true, /*allowPrivateIdentifiers*/ false)
                         : undefined;
                     if (name) {
                         while (token() === SyntaxKind.PrivateIdentifier) {
@@ -8147,10 +8148,12 @@ namespace ts {
                         && nextTokenJSDoc() === SyntaxKind.AtToken
                         && tokenIsIdentifierOrKeyword(nextTokenJSDoc())) {
                         const kind = scanner.getTokenValue();
-                        if(kind === "link" || kind === "linkcode" || kind === "linkplain") {
-                            return kind;
-                        }
+                        if (isJSDocLinkTag(kind)) return kind;
                     }
+                }
+
+                function isJSDocLinkTag(kind: string) {
+                    return kind === "link" || kind === "linkcode" || kind === "linkplain";
                 }
 
                 function parseUnknownTag(start: number, tagName: Identifier, indent: number, indentText: string) {
@@ -8275,7 +8278,7 @@ namespace ts {
 
                 function parseSeeTag(start: number, tagName: Identifier, indent?: number, indentText?: string): JSDocSeeTag {
                     const isMarkdownOrJSDocLink = token() === SyntaxKind.OpenBracketToken
-                        || lookAhead(() => nextTokenJSDoc() === SyntaxKind.AtToken && tokenIsIdentifierOrKeyword(nextTokenJSDoc()) && scanner.getTokenValue() === "link");
+                        || lookAhead(() => nextTokenJSDoc() === SyntaxKind.AtToken && tokenIsIdentifierOrKeyword(nextTokenJSDoc()) && isJSDocLinkTag(scanner.getTokenValue()));
                     const nameExpression = isMarkdownOrJSDocLink ? undefined : parseJSDocNameReference();
                     const comments = indent !== undefined && indentText !== undefined ? parseTrailingTagComments(start, getNodePos(), indent, indentText) : undefined;
                     return finishNode(factory.createJSDocSeeTag(tagName, nameExpression, comments), start);
@@ -9305,6 +9308,20 @@ namespace ts {
         moduleName?: string;
     }
 
+    function parseResolutionMode(mode: string | undefined, pos: number, end: number, reportDiagnostic: PragmaDiagnosticReporter): ModuleKind.ESNext | ModuleKind.CommonJS | undefined {
+        if (!mode) {
+            return undefined;
+        }
+        if (mode === "import") {
+            return ModuleKind.ESNext;
+        }
+        if (mode === "require") {
+            return ModuleKind.CommonJS;
+        }
+        reportDiagnostic(pos, end - pos, Diagnostics.resolution_mode_should_be_either_require_or_import);
+        return undefined;
+    }
+
     /*@internal*/
     export function processCommentPragmas(context: PragmaContext, sourceText: string): void {
         const pragmas: PragmaPseudoMapEntry[] = [];
@@ -9350,12 +9367,13 @@ namespace ts {
                     const typeReferenceDirectives = context.typeReferenceDirectives;
                     const libReferenceDirectives = context.libReferenceDirectives;
                     forEach(toArray(entryOrList) as PragmaPseudoMap["reference"][], arg => {
-                        const { types, lib, path } = arg.arguments;
+                        const { types, lib, path, ["resolution-mode"]: res } = arg.arguments;
                         if (arg.arguments["no-default-lib"]) {
                             context.hasNoDefaultLib = true;
                         }
                         else if (types) {
-                            typeReferenceDirectives.push({ pos: types.pos, end: types.end, fileName: types.value });
+                            const parsed = parseResolutionMode(res, types.pos, types.end, reportDiagnostic);
+                            typeReferenceDirectives.push({ pos: types.pos, end: types.end, fileName: types.value, ...(parsed ? { resolutionMode: parsed } : {}) });
                         }
                         else if (lib) {
                             libReferenceDirectives.push({ pos: lib.pos, end: lib.end, fileName: lib.value });

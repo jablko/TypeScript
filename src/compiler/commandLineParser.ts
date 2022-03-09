@@ -944,7 +944,7 @@ namespace ts {
             type: "string",
             category: Diagnostics.Language_and_Environment,
             description: Diagnostics.Specify_the_JSX_factory_function_used_when_targeting_React_JSX_emit_e_g_React_createElement_or_h,
-            defaultValueDescription: "`React.createElement`"
+            defaultValueDescription: "React.createElement",
         },
         {
             name: "jsxFragmentFactory",
@@ -989,7 +989,7 @@ namespace ts {
             affectsEmit: true,
             category: Diagnostics.Language_and_Environment,
             description: Diagnostics.Specify_the_object_invoked_for_createElement_This_only_applies_when_targeting_react_JSX_emit,
-            defaultValueDescription: "`React`",
+            defaultValueDescription: "React",
         },
         {
             name: "skipDefaultLibCheck",
@@ -3614,6 +3614,16 @@ namespace ts {
 
 
     function getDefaultValueForOption(option: CommandLineOption) {
+        if (
+            option.defaultValueDescription !== undefined &&
+            typeof option.defaultValueDescription !== "object"
+        )
+            return typeof option.type === "object"
+                ? getNameOfCompilerOptionValue(
+                      option.defaultValueDescription,
+                      option.type
+                  )
+                : option.defaultValueDescription;
         switch (option.type) {
             case "number":
                 return 1;

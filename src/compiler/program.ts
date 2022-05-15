@@ -966,6 +966,8 @@ namespace ts {
         Diagnostics.extends_clause_already_seen.code,
         Diagnostics.let_declarations_can_only_be_declared_inside_a_block.code,
         Diagnostics.let_is_not_allowed_to_be_used_as_a_name_in_let_or_const_declarations.code,
+        Diagnostics.Class_constructor_may_not_be_a_generator.code,
+        Diagnostics.Class_constructor_may_not_be_an_accessor.code,
     ]);
 
     /**
@@ -3764,7 +3766,7 @@ namespace ts {
                     }
                     const matchedByInclude = getMatchedIncludeSpec(program, fileName);
                     // Could be additional files specified as roots
-                    if (!matchedByInclude) return undefined;
+                    if (!matchedByInclude || !isString(matchedByInclude)) return undefined;
                     configFileNode = getTsConfigPropArrayElementValue(options.configFile, "include", matchedByInclude);
                     message = Diagnostics.File_is_matched_by_include_pattern_specified_here;
                     break;

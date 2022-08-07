@@ -909,6 +909,15 @@
         </Str>
         <Disp Icon="Str" />
       </Item>
+      <Item ItemId=";A_tuple_type_cannot_be_indexed_with_a_negative_value_2514" ItemType="0" PsrId="306" Leaf="true">
+        <Str Cat="Text">
+          <Val><![CDATA[A tuple type cannot be indexed with a negative value.]]></Val>
+          <Tgt Cat="Text" Stat="Loc" Orig="New">
+            <Val><![CDATA[Typ řazené kolekce členů není možné indexovat zápornou hodnotou.]]></Val>
+          </Tgt>
+        </Str>
+        <Disp Icon="Str" />
+      </Item>
       <Item ItemId=";A_type_assertion_expression_is_not_allowed_in_the_left_hand_side_of_an_exponentiation_expression_Con_17007" ItemType="0" PsrId="306" Leaf="true">
         <Str Cat="Text">
           <Val><![CDATA[A type assertion expression is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses.]]></Val>
@@ -6530,6 +6539,42 @@
           <Val><![CDATA[File change detected. Starting incremental compilation...]]></Val>
           <Tgt Cat="Text" Stat="Loc" Orig="New">
             <Val><![CDATA[Zjistila se změna souboru. Spouští se přírůstková kompilace...]]></Val>
+          </Tgt>
+        </Str>
+        <Disp Icon="Str" />
+      </Item>
+      <Item ItemId=";File_is_CommonJS_module_because_0_does_not_have_field_type_1460" ItemType="0" PsrId="306" Leaf="true">
+        <Str Cat="Text">
+          <Val><![CDATA[File is CommonJS module because '{0}' does not have field "type"]]></Val>
+          <Tgt Cat="Text" Stat="Loc" Orig="New">
+            <Val><![CDATA[Soubor je modul CommonJS, protože {0} nemá pole type]]></Val>
+          </Tgt>
+        </Str>
+        <Disp Icon="Str" />
+      </Item>
+      <Item ItemId=";File_is_CommonJS_module_because_0_has_field_type_whose_value_is_not_module_1459" ItemType="0" PsrId="306" Leaf="true">
+        <Str Cat="Text">
+          <Val><![CDATA[File is CommonJS module because '{0}' has field "type" whose value is not "module"]]></Val>
+          <Tgt Cat="Text" Stat="Loc" Orig="New">
+            <Val><![CDATA[Soubor je modul CommonJS, protože {0} má pole type, jehož hodnota není module]]></Val>
+          </Tgt>
+        </Str>
+        <Disp Icon="Str" />
+      </Item>
+      <Item ItemId=";File_is_CommonJS_module_because_package_json_was_not_found_1461" ItemType="0" PsrId="306" Leaf="true">
+        <Str Cat="Text">
+          <Val><![CDATA[File is CommonJS module because 'package.json' was not found]]></Val>
+          <Tgt Cat="Text" Stat="Loc" Orig="New">
+            <Val><![CDATA[Soubor je modul CommonJS, protože se nenašel package.json]]></Val>
+          </Tgt>
+        </Str>
+        <Disp Icon="Str" />
+      </Item>
+      <Item ItemId=";File_is_ECMAScript_module_because_0_has_field_type_with_value_module_1458" ItemType="0" PsrId="306" Leaf="true">
+        <Str Cat="Text">
+          <Val><![CDATA[File is ECMAScript module because '{0}' has field "type" with value "module"]]></Val>
+          <Tgt Cat="Text" Stat="Loc" Orig="New">
+            <Val><![CDATA[Soubor je modul ECMAScript, protože {0} má pole type s hodnotou module]]></Val>
           </Tgt>
         </Str>
         <Disp Icon="Str" />

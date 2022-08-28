@@ -28,6 +28,16 @@
     "engines": {
         "node": ">=4.2.0"
     },
+    "files": [
+        "./bin",
+        "./lib",
+        "!./lib/enu",
+        "./LICENSE.txt",
+        "./README.md",
+        "./SECURITY.md",
+        "./ThirdPartyNoticeText.txt",
+        "!**/.gitattributes"
+    ],
     "devDependencies": {
         "@octokit/rest": "latest",
         "@types/async": "latest",
@@ -62,6 +72,7 @@
         "eslint-formatter-autolinkable-stylish": "^1.2.0",
         "eslint-plugin-import": "^2.26.0",
         "eslint-plugin-jsdoc": "^39.3.6",
+        "eslint-plugin-local": "^1.0.0",
         "eslint-plugin-no-null": "^1.0.2",
         "fancy-log": "latest",
         "fs-extra": "^9.1.0",
@@ -81,7 +92,7 @@
         "node-fetch": "^2.6.7",
         "prex": "^0.4.7",
         "source-map-support": "latest",
-        "typescript": "^4.7.4",
+        "typescript": "^4.8.2",
         "vinyl": "latest",
         "which": "^2.0.2",
         "xml2js": "^0.4.23"
@@ -90,7 +101,6 @@
         "es5-ext": "0.10.53"
     },
     "scripts": {
-        "prepare": "gulp build-eslint-rules",
         "pretest": "gulp tests",
         "test": "gulp runtests-parallel --light=false",
         "test:eslint-rules": "gulp run-eslint-rules-tests",

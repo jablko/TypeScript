@@ -2069,8 +2069,9 @@ export function createTypeChecker(host: TypeCheckerHost): TypeChecker {
     const contextualTypes: (Type | undefined)[] = [];
     let contextualTypeCount = 0;
 
-    let currentInferenceNode: Node | undefined;
-    let currentInferenceContext: InferenceContext | undefined;
+    const inferenceContextNodes: Node[] = [];
+    const inferenceContexts: (InferenceContext | undefined)[] = [];
+    let inferenceContextCount = 0;
 
     const emptyStringType = getStringLiteralType("");
     const zeroType = getNumberLiteralType(0);
@@ -28764,8 +28765,22 @@ export function createTypeChecker(host: TypeCheckerHost): TypeChecker {
         return -1;
     }
 
+    function pushInferenceContext(node: Node, inferenceContext: InferenceContext | undefined) {
+        inferenceContextNodes[inferenceContextCount] = node;
+        inferenceContexts[inferenceContextCount] = inferenceContext;
+        inferenceContextCount++;
+    }
+
+    function popInferenceContext() {
+        inferenceContextCount--;
+    }
+
     function getInferenceContext(node: Node) {
-        return isNodeDescendantOf(node, currentInferenceNode) ? currentInferenceContext : undefined;
+        for (let i = inferenceContextCount - 1; i >= 0; i--) {
+            if (isNodeDescendantOf(node, inferenceContextNodes[i])) {
+                return inferenceContexts[i];
+            }
+        }
     }
 
     function getContextualJsxElementAttributesType(node: JsxOpeningLikeElement, contextFlags: ContextFlags | undefined) {
@@ -36022,10 +36037,7 @@ export function createTypeChecker(host: TypeCheckerHost): TypeChecker {
     function checkExpressionWithContextualType(node: Expression, contextualType: Type, inferenceContext: InferenceContext | undefined, checkMode: CheckMode): Type {
         const contextNode = getContextNode(node);
         pushContextualType(contextNode, contextualType);
-        const saveInferenceNode = currentInferenceNode;
-        const saveInferenceContext = currentInferenceContext;
-        currentInferenceNode = contextNode;
-        currentInferenceContext = inferenceContext;
+        pushInferenceContext(contextNode, inferenceContext);
         const type = checkExpression(node, checkMode | CheckMode.Contextual | (inferenceContext ? CheckMode.Inferential : 0));
         // In CheckMode.Inferential we collect intra-expression inference sites to process before fixing any type
         // parameters. This information is no longer needed after the call to checkExpression.
@@ -36037,8 +36049,7 @@ export function createTypeChecker(host: TypeCheckerHost): TypeChecker {
         // here would be to not mark contextually typed literals as fresh in the first place.
         const result = maybeTypeOfKind(type, TypeFlags.Literal) && isLiteralOfContextualType(type, instantiateContextualType(contextualType, node, /*contextFlags*/ undefined)) ?
             getRegularTypeOfLiteralType(type) : type;
-        currentInferenceNode = saveInferenceNode;
-        currentInferenceContext = saveInferenceContext;
+        popInferenceContext();
         popContextualType();
         return result;
     }
@@ -42778,7 +42789,7 @@ export function createTypeChecker(host: TypeCheckerHost): TypeChecker {
                     // Import equals declaration is deprecated in es6 or above
                     grammarErrorOnNode(node, Diagnostics.Import_assignment_cannot_be_used_when_targeting_ECMAScript_modules_Consider_using_import_Asterisk_as_ns_from_mod_import_a_from_mod_import_d_from_mod_or_another_module_format_instead);
                 }
-                else if (getEmitModuleResolutionKind(compilerOptions) === ModuleResolutionKind.Bundler) {
+                else if (!(node.flags & NodeFlags.Ambient) && getEmitModuleResolutionKind(compilerOptions) === ModuleResolutionKind.Bundler) {
                     grammarErrorOnNode(node, Diagnostics.Import_assignment_is_not_allowed_when_moduleResolution_is_set_to_bundler_Consider_using_import_Asterisk_as_ns_from_mod_import_a_from_mod_import_d_from_mod_or_another_module_format_instead);
                 }
             }
@@ -45580,6 +45591,9 @@ export function createTypeChecker(host: TypeCheckerHost): TypeChecker {
                         // If node.kind === SyntaxKind.Parameter, checkParameter reports an error if it's not a parameter property.
                         return grammarErrorOnNode(modifier, Diagnostics.readonly_modifier_can_only_appear_on_a_property_declaration_or_index_signature);
                     }
+                    else if (flags & ModifierFlags.Accessor) {
+                        return grammarErrorOnNode(modifier, Diagnostics._0_modifier_cannot_be_used_with_1_modifier, "readonly", "accessor");
+                    }
                     flags |= ModifierFlags.Readonly;
                     break;
 
@@ -45636,6 +45650,9 @@ export function createTypeChecker(host: TypeCheckerHost): TypeChecker {
                     }
                     else if (isPrivateIdentifierClassElementDeclaration(node)) {
                         return grammarErrorOnNode(modifier, Diagnostics._0_modifier_cannot_be_used_with_a_private_identifier, "declare");
+                    }
+                    else if (flags & ModifierFlags.Accessor) {
+                        return grammarErrorOnNode(modifier, Diagnostics._0_modifier_cannot_be_used_with_1_modifier, "declare", "accessor");
                     }
                     flags |= ModifierFlags.Ambient;
                     lastDeclare = modifier;

@@ -103,6 +103,7 @@ import {
     EmitResolver,
     EmitTextWriter,
     emptyArray,
+    endsWith,
     ensurePathIsNonModuleName,
     ensureTrailingDirectorySeparator,
     EntityName,
@@ -203,6 +204,7 @@ import {
     HasTypeArguments,
     HeritageClause,
     Identifier,
+    identifierToKeywordKind,
     IdentifierTypePredicate,
     identity,
     idText,
@@ -294,6 +296,7 @@ import {
     isNamespaceExport,
     isNamespaceExportDeclaration,
     isNamespaceImport,
+    isNonNullExpression,
     isNoSubstitutionTemplateLiteral,
     isNumericLiteral,
     isObjectLiteralExpression,
@@ -1649,7 +1652,7 @@ export function tryGetTextOfPropertyName(name: PropertyName | NoSubstitutionTemp
     switch (name.kind) {
         case SyntaxKind.Identifier:
         case SyntaxKind.PrivateIdentifier:
-            return name.autoGenerate ? undefined : name.escapedText;
+            return name.emitNode?.autoGenerate ? undefined : name.escapedText;
         case SyntaxKind.StringLiteral:
         case SyntaxKind.NumericLiteral:
         case SyntaxKind.NoSubstitutionTemplateLiteral:
@@ -1781,6 +1784,13 @@ export function getSpanOfTokenAtPosition(sourceFile: SourceFile, pos: number): T
     scanner.scan();
     const start = scanner.getTokenPos();
     return createTextSpanFromBounds(start, scanner.getTextPos());
+}
+
+/** @internal */
+export function scanTokenAtPosition(sourceFile: SourceFile, pos: number) {
+    const scanner = createScanner(sourceFile.languageVersion, /*skipTrivia*/ true, sourceFile.languageVariant, sourceFile.text, /*onError:*/ undefined, pos);
+    scanner.scan();
+    return scanner.getToken();
 }
 
 function getErrorSpanForArrowFunction(sourceFile: SourceFile, node: ArrowFunction): TextSpan {
@@ -4339,7 +4349,8 @@ export function isStringAKeyword(name: string) {
 }
 
 /** @internal */
-export function isIdentifierANonContextualKeyword({ originalKeywordKind }: Identifier): boolean {
+export function isIdentifierANonContextualKeyword(node: Identifier): boolean {
+    const originalKeywordKind = identifierToKeywordKind(node);
     return !!originalKeywordKind && !isContextualKeyword(originalKeywordKind);
 }
 
@@ -5497,7 +5508,7 @@ export function getDeclarationEmitOutputFilePathWorker(fileName: string, options
 export function getDeclarationEmitExtensionForPath(path: string) {
     return fileExtensionIsOneOf(path, [Extension.Mjs, Extension.Mts]) ? Extension.Dmts :
         fileExtensionIsOneOf(path, [Extension.Cjs, Extension.Cts]) ? Extension.Dcts :
-        fileExtensionIsOneOf(path, [Extension.Json]) ? `.json.d.ts` : // Drive-by redefinition of json declaration file output name so if it's ever enabled, it behaves well
+        fileExtensionIsOneOf(path, [Extension.Json]) ? `.d.json.ts` : // Drive-by redefinition of json declaration file output name so if it's ever enabled, it behaves well
         Extension.Dts;
 }
 
@@ -5509,7 +5520,7 @@ export function getDeclarationEmitExtensionForPath(path: string) {
 export function getPossibleOriginalInputExtensionForExtension(path: string) {
     return fileExtensionIsOneOf(path, [Extension.Dmts, Extension.Mjs, Extension.Mts]) ? [Extension.Mts, Extension.Mjs] :
         fileExtensionIsOneOf(path, [Extension.Dcts, Extension.Cjs, Extension.Cts]) ? [Extension.Cts, Extension.Cjs]:
-        fileExtensionIsOneOf(path, [`.json.d.ts`]) ? [Extension.Json] :
+        fileExtensionIsOneOf(path, [`.d.json.ts`]) ? [Extension.Json] :
         [Extension.Tsx, Extension.Ts, Extension.Jsx, Extension.Js];
 }
 
@@ -5707,7 +5718,7 @@ export function isThisInTypeQuery(node: Node): boolean {
 
 /** @internal */
 export function identifierIsThisKeyword(id: Identifier): boolean {
-    return id.originalKeywordKind === SyntaxKind.ThisKeyword;
+    return id.escapedText === "this";
 }
 
 /** @internal */
@@ -6192,7 +6203,7 @@ export function getEffectiveModifierFlagsNoCache(node: Node): ModifierFlags {
  */
 export function getSyntacticModifierFlagsNoCache(node: Node): ModifierFlags {
     let flags = canHaveModifiers(node) ? modifiersToFlags(node.modifiers) : ModifierFlags.None;
-    if (node.flags & NodeFlags.NestedNamespace || (node.kind === SyntaxKind.Identifier && (node as Identifier).isInJSDocNamespace)) {
+    if (node.flags & NodeFlags.NestedNamespace || node.kind === SyntaxKind.Identifier && node.flags & NodeFlags.IdentifierIsInJSDocNamespace) {
         flags |= ModifierFlags.Export;
     }
     return flags;
@@ -7325,7 +7336,6 @@ function Identifier(this: Mutable<Node>, kind: SyntaxKind, pos: number, end: num
     this.parent = undefined!;
     this.original = undefined;
     this.emitNode = undefined;
-    (this as Identifier).flowNode = undefined;
 }
 
 function SourceMapSource(this: SourceMapSource, fileName: string, text: string, skipTrivia?: (pos: number) => number) {
@@ -7348,9 +7358,21 @@ export const objectAllocator: ObjectAllocator = {
     getSourceMapSourceConstructor: () => SourceMapSource as any,
 };
 
+const objectAllocatorPatchers: ((objectAllocator: ObjectAllocator) => void)[] = [];
+
+/**
+ * Used by `deprecatedCompat` to patch the object allocator to apply deprecations.
+ * @internal
+ */
+export function addObjectAllocatorPatcher(fn: (objectAllocator: ObjectAllocator) => void) {
+    objectAllocatorPatchers.push(fn);
+    fn(objectAllocator);
+}
+
 /** @internal */
 export function setObjectAllocator(alloc: ObjectAllocator) {
     Object.assign(objectAllocator, alloc);
+    forEach(objectAllocatorPatchers, fn => fn(objectAllocator));
 }
 
 /** @internal */
@@ -8670,12 +8692,12 @@ export function positionIsSynthesized(pos: number): boolean {
  *
  * @internal
  */
-export function extensionIsTS(ext: Extension): boolean {
-    return ext === Extension.Ts || ext === Extension.Tsx || ext === Extension.Dts || ext === Extension.Cts || ext === Extension.Mts || ext === Extension.Dmts || ext === Extension.Dcts;
+export function extensionIsTS(ext: string): boolean {
+    return ext === Extension.Ts || ext === Extension.Tsx || ext === Extension.Dts || ext === Extension.Cts || ext === Extension.Mts || ext === Extension.Dmts || ext === Extension.Dcts || (startsWith(ext, ".d.") && endsWith(ext, ".ts"));
 }
 
 /** @internal */
-export function resolutionExtensionIsTSOrJson(ext: Extension) {
+export function resolutionExtensionIsTSOrJson(ext: string) {
     return extensionIsTS(ext) || ext === Extension.Json;
 }
 
@@ -9479,4 +9501,11 @@ export function isOptionalDeclaration(declaration: Declaration): boolean {
         default:
             return false;
     }
+}
+
+/** @internal */
+export function isNonNullAccess(node: Node): node is AccessExpression {
+    const kind = node.kind;
+    return (kind === SyntaxKind.PropertyAccessExpression
+        || kind === SyntaxKind.ElementAccessExpression) && isNonNullExpression((node as AccessExpression).expression);
 }

@@ -342,6 +342,7 @@ import {
     tryCast,
     Type,
     TypeChecker,
+    TypeFlags,
     TypeFormatFlags,
     TypeNode,
     TypeOfExpression,
@@ -2155,6 +2156,17 @@ export function isStringOrRegularExpressionOrTemplateLiteral(kind: SyntaxKind): 
 }
 
 /** @internal */
+export function isStringAndEmptyAnonymousObjectIntersection(type: Type) {
+    if (!type.isIntersection()) {
+        return false;
+    }
+
+    const { types, checker } = type;
+    return types.length === 2
+        && (types[0].flags & TypeFlags.String) && checker.isEmptyAnonymousObjectType(types[1]);
+}
+
+/** @internal */
 export function isPunctuation(kind: SyntaxKind): boolean {
     return SyntaxKind.FirstPunctuation <= kind && kind <= SyntaxKind.LastPunctuation;
 }
@@ -2413,7 +2425,9 @@ export function getModuleSpecifierResolverHost(program: Program, host: LanguageS
 
 /** @internal */
 export function moduleResolutionUsesNodeModules(moduleResolution: ModuleResolutionKind): boolean {
-    return moduleResolution === ModuleResolutionKind.Node10 || moduleResolution >= ModuleResolutionKind.Node16 && moduleResolution <= ModuleResolutionKind.NodeNext;
+    return moduleResolution === ModuleResolutionKind.Node10
+        || moduleResolution >= ModuleResolutionKind.Node16 && moduleResolution <= ModuleResolutionKind.NodeNext
+        || moduleResolution === ModuleResolutionKind.Bundler;
 }
 
 /** @internal */
